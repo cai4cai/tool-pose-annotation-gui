@@ -309,11 +309,14 @@ class SegmentationAnnotator(ImageAnnotator):
         if 0 <= x < w and 0 <= y < h:
             img = texture_to_numpy(self.texture)
             
-            if button == "right":
-                self.paint_val = img[y, x, 0]
-            elif button == "left":
-                val = img[y, x, 0]
-                img = np.where(img == val, self.paint_val, img)
+            # if button == "right":
+            #     self.paint_val = img[y, x, 0]
+            # elif button == "left":
+            #     val = img[y, x, 0]
+            #     img = np.where(img == val, self.paint_val, img)
+            
+            val = img[y, x, 0]
+            img = np.where(img == val, 0, img)
             
             blit_numpy_to_texture(img, self.texture)
         
