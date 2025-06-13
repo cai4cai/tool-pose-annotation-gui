@@ -9,6 +9,7 @@ Config.set('graphics', 'fullscreen', 'auto')
 from kivy.core.window import Window
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
 from kivy.uix.floatlayout import FloatLayout
 from kivy.graphics import Color, Ellipse, Line
 from kivy.uix.button import Button
@@ -347,10 +348,12 @@ class AnnotationApp(App):
         self.layout.add_widget(self.seg_annotator)
         self.root.add_widget(self.layout)
         
+        self.text = Label(size_hint=(0.3, 0.04), pos_hint={'left': 0.98, 'top': 0.98})
         self.revert_button = Button(text="Revert Mask", size_hint=(0.1, 0.04), pos_hint={'right': 0.98, 'top': 0.98})
         self.revert_button.bind(on_press=lambda instance: self.seg_annotator.revert())
         self.revert_button.on_press()
         self.root.add_widget(self.revert_button)
+        self.root.add_widget(self.text)
         
         Window.bind(on_key_down=self.key_down)
         Window.bind(on_request_close=self.on_request_close)
@@ -394,6 +397,8 @@ class AnnotationApp(App):
             json.dump(file_list, f)
 
     def load(self):
+        
+        self.text.text = self.annotation_files[self.index]
         
         self.seg_annotator.set_image(self.segmentation_files[self.index])
         
