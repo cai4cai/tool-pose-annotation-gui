@@ -9,7 +9,9 @@ Config.set('graphics', 'fullscreen', 'auto')
 from kivy.core.window import Window
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.graphics import Color, Ellipse, Line
+from kivy.uix.button import Button
 
 from src import ImageAnnotator
 
@@ -17,6 +19,8 @@ from glob import glob
 import json
 import argparse
 import numpy as np
+
+from PIL import Image
 
 ESCAPE_KEYCODE = 41
 BACKSPACE_KEYCODE = 42
@@ -247,21 +251,107 @@ class SkeletonAnnotator(ImageAnnotator):
     def reset(self):
         self.skeletons = []
         self.current_skeleton = None
+        
+        
+def texture_to_numpy(texture) -> np.ndarray:
+    """Return texture data as an (H, W, C) NumPy array in RGB(A)"""
+    if texture is None:
+        return None
+
+    w, h = texture.size
+    # Kivy stores pixels bottom-left origin, RGBA by default
+    raw = texture.pixels  # bytes-like, length = w * h * channels
+    channels = len(raw) // (w * h)
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    arr = arr.reshape((h, w, channels))
+    # arr = np.flipud(arr)  # flip vertically to top-left origin
+    return arr
+
+
+def blit_numpy_to_texture(array, texture):
+    if array is None or texture is None:
+        return
+
+    height, width = array.shape[:2]
+    channels = array.shape[2] if array.ndim == 3 else 1
+
+    # Flip vertically to match Kivy's coordinate system
+    # flipped = np.flipud(array)
+
+    # Convert to bytes
+    raw_data = array.tobytes()
+
+    # Determine color format
+    colorfmt = {1: 'luminance', 3: 'rgb', 4: 'rgba'}.get(channels)
+    if not colorfmt:
+        raise ValueError("Unsupported number of channels in array")
+
+    texture.blit_buffer(raw_data, colorfmt=colorfmt, bufferfmt='ubyte')
+    
+
+class SegmentationAnnotator(ImageAnnotator):
+    def __init__(self, allow_editing):
+        super().__init__(zoom_min=1.0)
+        self.allow_editing = allow_editing
+        self.paint_val = 0
+    
+    def revert(self):
+        blit_numpy_to_texture(self.original_mask, self.texture)
+    
+    def on_click(self, position, button):
+        if not self.allow_editing:
+            return
+        
+        x, y = map(int, position)
+        w, h = self.texture.size
+        
+        if 0 <= x < w and 0 <= y < h:
+            img = texture_to_numpy(self.texture)
+            
+            if button == "right":
+                self.paint_val = img[y, x, 0]
+            elif button == "left":
+                val = img[y, x, 0]
+                img = np.where(img == val, self.paint_val, img)
+            
+            blit_numpy_to_texture(img, self.texture)
+        
+            self.draw()
+    
+    def new_image(self):
+        self.original_mask = texture_to_numpy(self.texture)
+        
+        
+    def get_data(self):
+        return texture_to_numpy(self.texture)[..., 0]
+
 
 
 class AnnotationApp(App):
 
-    def __init__(self, image_files, annotation_files, allow_editing):
+    def __init__(self, image_files, annotation_files, segmentation_files, allow_editing):
         super().__init__()
         self.image_files = image_files
         self.annotation_files = annotation_files
+        self.segmentation_files = segmentation_files
         self.allow_editing = allow_editing
         self.index = 0
         
     def build(self):
-        self.root = BoxLayout()
-        self.annotator = SkeletonAnnotator(self.allow_editing)
-        self.root.add_widget(self.annotator)
+        self.root = FloatLayout()
+        
+        self.layout = BoxLayout()
+        self.skel_annotator = SkeletonAnnotator(self.allow_editing)
+        self.seg_annotator = SegmentationAnnotator(self.allow_editing)
+        self.layout.add_widget(self.skel_annotator)
+        self.layout.add_widget(self.seg_annotator)
+        self.root.add_widget(self.layout)
+        
+        self.revert_button = Button(text="Revert Mask", size_hint=(0.1, 0.04), pos_hint={'right': 0.98, 'top': 0.98})
+        self.revert_button.bind(on_press=lambda instance: self.seg_annotator.revert())
+        self.revert_button.on_press()
+        self.root.add_widget(self.revert_button)
+        
         Window.bind(on_key_down=self.key_down)
         Window.bind(on_request_close=self.on_request_close)
         return self.root
@@ -271,12 +361,12 @@ class AnnotationApp(App):
 
     def key_down(self, instance, keyboard, keycode, text, modifiers):
         if self.allow_editing and keycode == BACKSPACE_KEYCODE:
-            self.annotator.delete_last()
-        elif not self.annotator.is_busy and keycode == LEFT_KEYCODE and self.index > 0:
+            self.skel_annotator.delete_last()
+        elif not self.skel_annotator.is_busy and keycode == LEFT_KEYCODE and self.index > 0:
             self.save()
             self.index -= 1
             self.load()
-        elif not self.annotator.is_busy and keycode == RIGHT_KEYCODE and self.index < len(self.image_files) - 1:
+        elif not self.skel_annotator.is_busy and keycode == RIGHT_KEYCODE and self.index < len(self.image_files) - 1:
             self.save()
             self.index += 1
             self.load()
@@ -284,7 +374,7 @@ class AnnotationApp(App):
             self.cache_image()
             
     def on_request_close(self, *args, **kwargs):
-        if self.annotator.is_busy:
+        if self.skel_annotator.is_busy:
             return True
         else:
             self.save()
@@ -304,23 +394,29 @@ class AnnotationApp(App):
             json.dump(file_list, f)
 
     def load(self):
-        self.annotator.set_image(self.image_files[self.index])
-        self.annotator.reset()
+        
+        self.seg_annotator.set_image(self.segmentation_files[self.index])
+        
+        self.skel_annotator.set_image(self.image_files[self.index])
+        self.skel_annotator.reset()
         if os.path.exists(self.annotation_files[self.index]):
             with open(self.annotation_files[self.index], 'r') as file:
                 data = json.load(file)
-            self.annotator.set_data(data)
+            self.skel_annotator.set_data(data)
             
     def save(self):
         if self.allow_editing:
-            data = self.annotator.get_data()
+            data = self.skel_annotator.get_data()
             with open(self.annotation_files[self.index], 'w') as file:
                 json.dump(data, file)
+                
+            seg = self.seg_annotator.get_data()
+            Image.fromarray(seg).save(self.segmentation_files[self.index])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--image-glob', required=True, type=str,
+        '--image-glob', type=str,
         help='glob pattern for finding images.'
     )
     parser.add_argument(
@@ -333,22 +429,25 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    images = sorted(glob(args.image_glob, recursive=True))
+
+    # images = sorted(glob(args.image_glob, recursive=True))
+    # if args.cached_only:
+    #     if not os.path.exists("cached-images.json"):
+    #         print("No cached files!")
+    #         quit()
+    #     with open("cached-images.json", "r") as f:
+    #         file_list = json.load(f)
+    #     images = [i for i in images if i in file_list]
+        
+
+    with open("samples_to_check.json") as file:
+        images = json.load(file)    
+    images = [i.replace("/", os.path.sep).replace("data\\", "") for i in images]
     
-    if args.cached_only:
-        
-        if not os.path.exists("cached-images.json"):
-            print("No cached files!")
-            quit()
-            
-        with open("cached-images.json", "r") as f:
-            file_list = json.load(f)
-            
-        images = [i for i in images if i in file_list]
-        
     assert len(images) > 0, 'No images found!'
+    
+    annotations = [os.path.sep.join(i.split(os.path.sep)[:-1] + ["toolposes.json"]) for i in images]
+    segmentations = [os.path.sep.join(i.split(os.path.sep)[:-1] + ["instrument_instances.png"]) for i in images]
 
-    annotations = [i.split(".")[0] + ".json" for i in images]
-
-    AnnotationApp(images, annotations, not args.visualise_only).run()
+    AnnotationApp(images, annotations, segmentations, not args.visualise_only).run()
     
