@@ -6,7 +6,7 @@ Pose annotation GUI for laparoscopic surgical tools.
 # Usage
 Clone this repo and install the dependancies...
 ```bash
-git clone https://github.com/charliebudd/tool-pose-annotation-gui.git
+git clone https://github.com/cai4cai/tool-pose-annotation-gui.git
 cd tool-pose-annotation-gui
 pip install -r requirements.txt
 ```
