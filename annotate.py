@@ -10,6 +10,8 @@ from kivy.core.window import Window
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.graphics import Color, Ellipse, Line
+from kivy.graphics import Rectangle, PushMatrix, PopMatrix, Scale, Translate
+from kivy.core.text import Label as CoreLabel 
 
 from src import ImageAnnotator
 
@@ -159,6 +161,33 @@ class Skeleton():
             if tag != "missing":
                 Color(*self.color_map[tag], mode='hsv')
                 Ellipse(pos=(node[0] - self.node_radius, node[1] - self.node_radius), size=self.node_size)
+
+        offset_y = 25.0
+        node_labels = ["E", "H", "T1", "T2"]
+        for i, (node, tag) in enumerate(zip(self.nodes, self.tags)):
+            if tag != "missing" and node is not None:
+                if i < len(node_labels):
+                    text_content = node_labels[i]
+                else:
+                    text_content = str(i+1)
+
+                label = CoreLabel(text=text_content, font_size=24, bold=True, color=(1,1,1,1),
+                                outline_width=2,
+                                outline_color=(0,0,0,1))
+                label.refresh()
+                texture = label.texture
+                texture_size = list(texture.size)
+
+                PushMatrix()
+                Translate(node[0], node[1]+offset_y, 0)
+
+                Scale(1, -1, 1)
+                Color(1, 1, 1, 1, mode='rgba')
+
+                Rectangle(texture=texture,
+                        pos=(-texture_size[0] / 2, -texture_size[1] / 2),
+                        size=texture_size)
+                PopMatrix()
 
     def set_data(self, data):
         self.nodes = data['nodes']
